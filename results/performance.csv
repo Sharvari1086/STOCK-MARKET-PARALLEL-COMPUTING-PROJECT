@@ -1,0 +1,2 @@
+SequentialTime,ParallelTime,Threads,BlockSize,Repetitions,Speedup,EfficiencyPercent,MaxDifference,MaxDiagonalError,MinCorrelation,MaxCorrelation
+0.151333,0.027,16,32,3,5.60493,35.0308,0,4.32987e-15,-0.217268,1
