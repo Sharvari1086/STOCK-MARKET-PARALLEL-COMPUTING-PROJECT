@@ -55,40 +55,36 @@ StockMetric calculateMetrics(
     const vector<double>& prices
 ) {
     StockMetric metric;
+
+    int n = static_cast<int>(prices.size()) - 1;
+
     metric.name = name;
-    metric.observations = static_cast<int>(prices.size()) - 1;
-    metric.averageReturn = 0.0;
-    metric.totalReturn = 0.0;
-    metric.volatility = 0.0;
+    metric.observations = n;
 
-    vector<double> returns;
-    returns.reserve(prices.size() - 1);
+    double sum = 0.0;
 
-    for (size_t i = 1; i < prices.size(); i++) {
-        double dailyReturn = prices[i] / prices[i - 1] - 1.0;
-        returns.push_back(dailyReturn);
+    for (int i = 1; i < static_cast<int>(prices.size()); i++) {
+        double r = prices[i] / prices[i - 1] - 1.0;
+        sum += r;
     }
 
-    double averageReturn = 0.0;
-
-    for (double r : returns) {
-        averageReturn += r;
-    }
-
-    averageReturn /= returns.size();
+    double averageReturn = sum / n;
 
     double variance = 0.0;
 
-    for (double r : returns) {
+    for (int i = 1; i < static_cast<int>(prices.size()); i++) {
+        double r = prices[i] / prices[i - 1] - 1.0;
         double difference = r - averageReturn;
         variance += difference * difference;
     }
 
-    variance /= returns.size();
+    variance /= n;
 
     metric.averageReturn = averageReturn * 100.0;
+
     metric.totalReturn =
         (prices.back() / prices.front() - 1.0) * 100.0;
+
     metric.volatility = sqrt(variance) * 100.0;
 
     return metric;
@@ -107,19 +103,44 @@ vector<StockMetric> sequentialMetrics(
     return metrics;
 }
 
-vector<StockMetric> parallelMetrics(
+double parallelMetricsRepeated(
     const vector<string>& names,
     const vector<vector<double>>& stockPrices,
-    int threads
+    int threads,
+    int repetitions,
+    vector<StockMetric>& metrics
 ) {
-    vector<StockMetric> metrics(names.size());
+    metrics.resize(names.size());
 
-    #pragma omp parallel for schedule(static) num_threads(threads)
-    for (int i = 0; i < static_cast<int>(names.size()); i++) {
-        metrics[i] = calculateMetrics(names[i], stockPrices[i]);
+    double totalTime = 0.0;
+    double start = 0.0;
+
+    #pragma omp parallel num_threads(threads) shared(metrics, totalTime, start)
+    {
+        for (int r = 0; r < repetitions; r++) {
+
+            #pragma omp master
+            {
+                start = omp_get_wtime();
+            }
+
+            #pragma omp barrier
+
+            #pragma omp for schedule(static)
+            for (int i = 0; i < static_cast<int>(names.size()); i++) {
+                metrics[i] = calculateMetrics(names[i], stockPrices[i]);
+            }
+
+            #pragma omp master
+            {
+                totalTime += omp_get_wtime() - start;
+            }
+
+            #pragma omp barrier
+        }
     }
 
-    return metrics;
+    return totalTime / repetitions;
 }
 
 int main() {
@@ -210,11 +231,10 @@ int main() {
         return 1;
     }
 
-    const int repetitions = 3;
+    const int repetitions = 30;
     const int threads = max(1, omp_get_max_threads());
 
     double sequentialTotal = 0.0;
-    double parallelTotal = 0.0;
 
     vector<StockMetric> sequentialResult;
     vector<StockMetric> parallelResult;
@@ -225,18 +245,17 @@ int main() {
         sequentialResult = sequentialMetrics(stockNames, stockPrices);
 
         sequentialTotal += omp_get_wtime() - start;
-
-        start = omp_get_wtime();
-
-        parallelResult = parallelMetrics(
-            stockNames, stockPrices, threads
-        );
-
-        parallelTotal += omp_get_wtime() - start;
     }
 
     double sequentialTime = sequentialTotal / repetitions;
-    double parallelTime = parallelTotal / repetitions;
+
+    double parallelTime = parallelMetricsRepeated(
+        stockNames,
+        stockPrices,
+        threads,
+        repetitions,
+        parallelResult
+    );
 
     double speedup = sequentialTime / parallelTime;
     double efficiency = (speedup / threads) * 100.0;
@@ -318,6 +337,7 @@ int main() {
     cout << "Sequential time: " << sequentialTime << " seconds\n";
     cout << "Parallel time: " << parallelTime << " seconds\n";
     cout << "OpenMP threads: " << threads << "\n";
+    cout << "Repetitions: " << repetitions << "\n";
     cout << "Speedup: " << speedup << "x\n";
     cout << "Parallel efficiency: " << efficiency << "%\n";
     cout << "Maximum result difference: " << maxDifference << "\n";
